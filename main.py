@@ -196,6 +196,24 @@ class Text(RenderObject):
         self.pen.color(self.color)
         self.pen.write(self.text, font=(self.font, self.font_size), align="center")
 
+class BulletRenderer(RenderObject):
+    def __init__(self):
+        super().__init__()
+        self.sort_order = 2
+    
+    def render(self):
+        self.pen.clear()
+        if not self.visible:
+            return
+            
+        for bullet in bullets:
+            self.pen.shapesize(stretch_len=bullet.game_object.transform.scale.x, stretch_wid=bullet.game_object.transform.scale.y)
+            self.pen.setheading(bullet.game_object.transform.rotation)
+            self.pen.goto(bullet.game_object.transform.position.x, bullet.game_object.transform.position.y)
+            self.pen.shape(bullet.shape)
+            self.pen.color(bullet.color)
+            self.pen.stamp()
+
 class Input:
     def __init__(self):
         self.keys = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
@@ -282,6 +300,8 @@ class Bullet(Component):
         self.speed = speed
         self.player_flag = False
         self.radius = 10
+        self.color = "white"
+        self.shape = "circle"
 
     def update(self):
         self.game_object.transform.position += angle_to_vector(self.angle) * self.speed
@@ -339,8 +359,7 @@ class Shooter(Component):
                 return
             bul = GameObject()
             bul.transform.position = self.game_object.transform.position + self.spawn_position
-            sprite = bul.add_component(Sprite(self.color, "circle"))
-            sprite.sort_order = self.sort_order
+            # Sprite component removed for optimization - using BulletRenderer
             bul.add_component(EdgeDelete())
             angle = self.game_object.transform.rotation + (self.band_spread / (self.bands + 1) * (i+1)) + (180-self.band_spread)/2 + self.current_rot_offset
 
@@ -363,6 +382,8 @@ class Shooter(Component):
             bullet_script = bul.add_component(Bullet(angle = angle, speed = self.bullet_speed))
             bullet_script.player_flag = self.player_flag
             bullet_script.radius = self.radius
+            bullet_script.color = self.color
+            bullet_script.shape = "circle"
             bullets.append(bullet_script)
 
 class Entity(Component):
@@ -547,6 +568,7 @@ input_manager = Input()
 game_manager = GameManager()
 black_bars = GameObject().add_component(BlackBars())
 background = GameObject().add_component(Background())
+bullet_renderer = GameObject().add_component(BulletRenderer())
 
 # Create debug FPS text (only visible if debug = True)
 fps_text_object = GameObject(position=Vector2(50, 320))
