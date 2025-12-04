@@ -153,6 +153,12 @@ class RenderObject(Component):
         self.visible = True
         render_objects.append(self)
 
+    def toggle_visibility(self):
+        if self.visible:
+            self.visible = False
+        else:
+            self.visible = True
+
     def render(self):
         self.pen.clear()
         if self.visible:
@@ -454,6 +460,8 @@ class Player(Entity):
         self.health = 1
         self.invincibility = True
 
+        self.wide_shooter = None
+
     def start(self):
         super().start()
         sprite = self.sprite.add_component(Sprite())
@@ -463,6 +471,13 @@ class Player(Entity):
         self.sprite.transform.scale = Vector2(2, 1)
         screen.ontimer(self.end_invincibility, 1000)
 
+        self.wide_shooter = self.game_object.add_component(
+            Shooter(speed=30, timer=2, color="turquoise4", bands=5, spread=25, radius=16, player_flag=True))
+        self.wide_shooter.bullet_scale = Vector2(0.25, 2)
+        self.wide_shooter.radiance = 5
+        self.wide_shooter.radiance_y_influence = True
+        self.wide_shooter.sort_order = -1
+
     def end_invincibility(self):
         self.invincibility = False
 
@@ -470,12 +485,15 @@ class Player(Entity):
         if self.invincibility:
             return
         super().die()
+        death_effect = GameObject(position=self.game_object.transform.position, starting_comps=[PlayerDeathEffect()])
         screen.ontimer(spawn_player, 1000)
 
     def update(self):
         super().update()
         self.collide(allow_player_bullets=False)
-        self.move_speed = self.move_speeds[game_manager.current_move_speed_index]
+        index = game_manager.current_move_speed_index
+        if index <= len(self.move_speeds):
+            self.move_speed = self.move_speeds[index]
         if input_manager.get_key("Up") or input_manager.get_key("w"):
             self.move_input.y = 1
         elif input_manager.get_key("Down") or input_manager.get_key("s"):
@@ -493,9 +511,19 @@ class Player(Entity):
 class PlayerDeathEffect(Component):
     def __init__(self):
         super().__init__()
-        self.effect_object = GameObject()
-        self.sprite = self.effect_object.add_component(Sprite("white", "circle"))
-        self.effect_object.transform.scale = Vector2(10, 10)
+
+    def start(self):
+        sprite = self.game_object.add_component(Sprite("red", "circle"))
+        sprite.sort_order = 5
+        self.game_object.transform.scale = Vector2(2, 2)
+
+        lifetime = 200
+        blinks = 4
+        segment_duration = int(lifetime/blinks)
+        for i in range(1, blinks + 1):
+            screen.ontimer(sprite.toggle_visibility, segment_duration * i)
+        screen.ontimer(self.game_object.destroy, segment_duration * (blinks + 2))
+
 
 class Background(Component):
     def __init__(self):
@@ -540,11 +568,6 @@ def spawn_player():
     player_object = GameObject(position=Vector2(0, -200), starting_comps=[Sprite("blue", "circle")])
     player_script = player_object.add_component(Player())
     player_object.add_component(EdgeConstrict())
-    wide_shooter = player_object.add_component(Shooter(speed=30, timer=2, color="turquoise4", bands=5, spread=25, radius=16, player_flag=True))
-    wide_shooter.bullet_scale = Vector2(0.25, 2)
-    wide_shooter.radiance = 5
-    wide_shooter.radiance_y_influence = True
-    wide_shooter.sort_order = -1
 
     player_object.transform.scale = Vector2(0.5, 0.5)
 
