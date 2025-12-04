@@ -58,6 +58,9 @@ class Vector2:
     def magnitude(self):
         return (self.x**2 + self.y**2)**0.5
 
+    def sqr_magnitude(self):
+        return self.x**2 + self.y**2
+
     def lerp(self, other, t):
         return self + (other - self) * t
 
@@ -200,19 +203,55 @@ class BulletRenderer(RenderObject):
     def __init__(self):
         super().__init__()
         self.sort_order = 2
+        self.current_color = None
+        self.current_shape = None
+        self.current_scale = None
     
     def render(self):
         self.pen.clear()
         if not self.visible:
             return
             
+        # Optimization: Removed sorting to save CPU cycles. 
+        # Assuming bullets are naturally grouped by creation time/type.
+        
+        # Reset state trackers
+        self.current_color = None
+        self.current_shape = None
+        self.current_scale = None
+        self.current_heading = None
+        
+        # Cache pen methods for speed
+        pen = self.pen
+        pen_color = pen.color
+        pen_shape = pen.shape
+        pen_shapesize = pen.shapesize
+        pen_setheading = pen.setheading
+        pen_goto = pen.goto
+        pen_stamp = pen.stamp
+            
         for bullet in bullets:
-            self.pen.shapesize(stretch_len=bullet.game_object.transform.scale.x, stretch_wid=bullet.game_object.transform.scale.y)
-            self.pen.setheading(bullet.game_object.transform.rotation)
-            self.pen.goto(bullet.game_object.transform.position.x, bullet.game_object.transform.position.y)
-            self.pen.shape(bullet.shape)
-            self.pen.color(bullet.color)
-            self.pen.stamp()
+            # Only change pen state if necessary
+            if self.current_color != bullet.color:
+                pen_color(bullet.color)
+                self.current_color = bullet.color
+            
+            if self.current_shape != bullet.shape:
+                pen_shape(bullet.shape)
+                self.current_shape = bullet.shape
+                
+            if self.current_scale != (bullet.scale.x, bullet.scale.y):
+                pen_shapesize(stretch_len=bullet.scale.x, stretch_wid=bullet.scale.y)
+                self.current_scale = (bullet.scale.x, bullet.scale.y)
+
+            # Optimization: Only change heading if necessary
+            target_heading = bullet.angle - 90
+            if self.current_heading != target_heading:
+                pen_setheading(target_heading)
+                self.current_heading = target_heading
+
+            pen_goto(bullet.position.x, bullet.position.y)
+            pen_stamp()
 
 class Input:
     def __init__(self):
@@ -302,10 +341,52 @@ class Bullet(Component):
         self.radius = 10
         self.color = "white"
         self.shape = "circle"
+        self.velocity = angle_to_vector(self.angle) * self.speed
+
+    def start(self):
+        self.transform = self.game_object.transform
 
     def update(self):
-        self.game_object.transform.position += angle_to_vector(self.angle) * self.speed
-        self.game_object.transform.rotation = self.angle - 90
+        self.transform.position += self.velocity
+        self.transform.rotation = self.angle - 90
+
+class SimpleBullet:
+    def __init__(self, position, velocity, angle, color, shape, radius, player_flag, scale):
+        self.position = position
+        self.velocity = velocity
+        self.angle = angle
+        self.color = color
+        self.shape = shape
+        self.radius = radius
+        self.player_flag = player_flag
+        self.scale = scale
+        self.active = True
+
+class BulletManager(Component):
+    def __init__(self):
+        super().__init__()
+        
+    def update(self):
+        global bullets
+        # Update all bullets
+        for bullet in bullets:
+            # Optimization: Avoid Vector2 allocation by modifying x/y directly
+            bullet.position.x += bullet.velocity.x
+            bullet.position.y += bullet.velocity.y
+            
+            # Bounds check (EdgeDelete logic)
+            # Tightened bounds to remove bullets as soon as they leave the visible screen
+            # screen_dimensions.x / 2 = 210
+            # screen_dimensions.y / 2 = 350
+            # radius approx 10
+            
+            if (bullet.position.x >= 220 or bullet.position.x <= -220 or 
+                bullet.position.y >= 360 or bullet.position.y <= -360):
+                bullet.active = False
+                
+        # Remove inactive bullets
+        # List comprehension is faster than manual loop
+        bullets[:] = [b for b in bullets if b.active]
 
 class Shooter(Component):
     def __init__(self, speed=15, timer=5, bands=3, spread=180, rot=0, backwards=0, radiance=0, color="red", radius=8, player_flag = False):
@@ -357,10 +438,11 @@ class Shooter(Component):
         for i in range(0, self.bands):
             if len(bullets) >= bullet_limit:
                 return
-            bul = GameObject()
-            bul.transform.position = self.game_object.transform.position + self.spawn_position
-            # Sprite component removed for optimization - using BulletRenderer
-            bul.add_component(EdgeDelete())
+            
+            # Calculate position
+            pos = self.game_object.transform.position + self.spawn_position
+            
+            # Calculate angle
             angle = self.game_object.transform.rotation + (self.band_spread / (self.bands + 1) * (i+1)) + (180-self.band_spread)/2 + self.current_rot_offset
 
             if self.radiance > 0:
@@ -378,13 +460,24 @@ class Shooter(Component):
                     self.radiance_counter += 1
                     if self.radiance_counter > self.max_radiance_counter:
                         self.radiance_counter = 0
-            bul.transform.scale = self.bullet_scale
-            bullet_script = bul.add_component(Bullet(angle = angle, speed = self.bullet_speed))
-            bullet_script.player_flag = self.player_flag
-            bullet_script.radius = self.radius
-            bullet_script.color = self.color
-            bullet_script.shape = "circle"
-            bullets.append(bullet_script)
+            
+            # Create SimpleBullet instead of GameObject
+            velocity = angle_to_vector(angle) * self.bullet_speed
+            
+            # Create a copy of scale to avoid reference issues
+            scale = Vector2(self.bullet_scale.x, self.bullet_scale.y)
+            
+            new_bullet = SimpleBullet(
+                position=pos,
+                velocity=velocity,
+                angle=angle,
+                color=self.color,
+                shape="circle",
+                radius=self.radius,
+                player_flag=self.player_flag,
+                scale=scale
+            )
+            bullets.append(new_bullet)
 
 class Entity(Component):
     def __init__(self):
@@ -398,8 +491,8 @@ class Entity(Component):
         for bullet in bullets:
             if bullet.player_flag == allow_player_bullets:
                 transform = self.game_object.transform
-                bullet_transform = bullet.game_object.transform
-                if (transform.position - bullet_transform.position).magnitude() < bullet.radius:
+                # SimpleBullet has position directly
+                if (transform.position - bullet.position).sqr_magnitude() < bullet.radius**2:
                     self.health -= 1
                     if self.health <= 0:
                         self.die()
@@ -545,6 +638,7 @@ class Background(Component):
             self.game_object.transform.position.y = 0
 bullet_limit = 1000
 bullets = []
+bullet_pool = []
 render_objects = []
 game_objects = []
 
@@ -552,6 +646,11 @@ game_objects = []
 frame_counter = 0
 last_frame_time = time.time()
 frame_times = []
+perf_metrics = {
+    'update': 0,
+    'render_prep': 0,
+    'screen_update': 0
+}
 
 
 screen = turtle.Screen()
@@ -569,12 +668,19 @@ game_manager = GameManager()
 black_bars = GameObject().add_component(BlackBars())
 background = GameObject().add_component(Background())
 bullet_renderer = GameObject().add_component(BulletRenderer())
+bullet_manager = GameObject().add_component(BulletManager())
 
 # Create debug FPS text (only visible if debug = True)
 fps_text_object = GameObject(position=Vector2(50, 320))
 fps_text = fps_text_object.add_component(Text("FPS: 0 | Bul: 0", "yellow", "14", "courier"))
 fps_text.sort_order = 100
 fps_text.visible = debug
+
+# Create debug Performance text
+perf_text_object = GameObject(position=Vector2(50, 280))
+perf_text = perf_text_object.add_component(Text("", "yellow", "10", "courier"))
+perf_text.sort_order = 100
+perf_text.visible = debug
 
 # Create background for FPS text
 if debug:
@@ -606,38 +712,55 @@ enemy.transform.position = Vector2(0, 325)
 enemy.transform.rotation = -180
 
 def refresh_screen():
+    t_start = time.time()
     ros = render_objects
     ros.sort(key=lambda r: r.sort_order)
     for r in ros:
         r.render()
+    t_render = time.time()
     screen.update()
+    t_end = time.time()
+    
+    if debug:
+        perf_metrics['render_prep'] = (t_render - t_start) * 1000
+        perf_metrics['screen_update'] = (t_end - t_render) * 1000
 
 def game_loop():
     global frame_counter, last_frame_time
     
-    # Update FPS counter every 10 frames if debug is enabled
+    t_start = time.time()
+    for game_object in game_objects:
+        game_object.update()
+    t_update = time.time()
+    
+    if debug:
+        perf_metrics['update'] = (t_update - t_start) * 1000
+
+    refresh_screen()
+    input_manager.update()
+    game_manager.update()
+    
+    # Update FPS counter every 60 frames if debug is enabled
     if debug:
         frame_counter += 1
-        if frame_counter >= 10:
+        if frame_counter >= 60:
             frame_counter = 0
             current_time = time.time()
             frame_time = current_time - last_frame_time
             last_frame_time = current_time
             
-            frame_times.append(frame_time / 10)  # Average per frame
+            frame_times.append(frame_time / 60)  # Average per frame
             if len(frame_times) > 10:
                 frame_times.pop(0)
             
             avg_frame_time = sum(frame_times) / len(frame_times)
             fps = 1 / avg_frame_time if avg_frame_time > 0 else 0
             fps_text.text = f"FPS: {int(fps)} | Bul: {len(bullets)}"
-    
-    for game_object in game_objects:
-        game_object.update()
-    refresh_screen()
-    input_manager.update()
-    game_manager.update()
-    screen.ontimer(game_loop, 16)
+            perf_text.text = f"Upd: {perf_metrics['update']:.1f}ms | Prep: {perf_metrics['render_prep']:.1f}ms | Draw: {perf_metrics['screen_update']:.1f}ms"
+            print(f"FPS: {int(fps)} | Upd: {perf_metrics['update']:.1f}ms | Prep: {perf_metrics['render_prep']:.1f}ms | Draw: {perf_metrics['screen_update']:.1f}ms | Bul: {len(bullets)}")
+            
+    # Optimization: Reduced delay to 0 to run as fast as possible
+    screen.ontimer(game_loop, 0)
 
 game_loop()
 
