@@ -1,8 +1,15 @@
 import math
 import sys
+import time
 import turtle
 
 sys.setrecursionlimit(100)
+
+# Debug flag - set to True to show FPS and bullet count
+debug = True
+
+# Invincibility time in milliseconds
+invincibility_time = 3000
 
 class Component:
     def __init__(self):
@@ -461,7 +468,7 @@ class Player(Entity):
         self.sprite.transform.ignore_parent_scale = True
         self.sprite.transform.parent = self.game_object.transform
         self.sprite.transform.scale = Vector2(2, 1)
-        screen.ontimer(self.end_invincibility, 1000)
+        screen.ontimer(self.end_invincibility, invincibility_time)
 
     def end_invincibility(self):
         self.invincibility = False
@@ -520,6 +527,11 @@ bullets = []
 render_objects = []
 game_objects = []
 
+# Debug variables for FPS tracking
+frame_counter = 0
+last_frame_time = time.time()
+frame_times = []
+
 
 screen = turtle.Screen()
 
@@ -535,6 +547,19 @@ input_manager = Input()
 game_manager = GameManager()
 black_bars = GameObject().add_component(BlackBars())
 background = GameObject().add_component(Background())
+
+# Create debug FPS text (only visible if debug = True)
+fps_text_object = GameObject(position=Vector2(50, 320))
+fps_text = fps_text_object.add_component(Text("FPS: 0 | Bul: 0", "yellow", "14", "courier"))
+fps_text.sort_order = 100
+fps_text.visible = debug
+
+# Create background for FPS text
+if debug:
+    fps_bg_object = GameObject(position=Vector2(50, 325))
+    fps_bg = fps_bg_object.add_component(Sprite("black", "square"))
+    fps_bg.game_object.transform.scale = Vector2(10, 1.5)
+    fps_bg.sort_order = 99
 
 def spawn_player():
     player_object = GameObject(position=Vector2(0, -200), starting_comps=[Sprite("blue", "circle")])
@@ -563,8 +588,28 @@ def refresh_screen():
     ros.sort(key=lambda r: r.sort_order)
     for r in ros:
         r.render()
+    screen.update()
 
 def game_loop():
+    global frame_counter, last_frame_time
+    
+    # Update FPS counter every 10 frames if debug is enabled
+    if debug:
+        frame_counter += 1
+        if frame_counter >= 10:
+            frame_counter = 0
+            current_time = time.time()
+            frame_time = current_time - last_frame_time
+            last_frame_time = current_time
+            
+            frame_times.append(frame_time / 10)  # Average per frame
+            if len(frame_times) > 10:
+                frame_times.pop(0)
+            
+            avg_frame_time = sum(frame_times) / len(frame_times)
+            fps = 1 / avg_frame_time if avg_frame_time > 0 else 0
+            fps_text.text = f"FPS: {int(fps)} | Bul: {len(bullets)}"
+    
     for game_object in game_objects:
         game_object.update()
     refresh_screen()
