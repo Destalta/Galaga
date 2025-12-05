@@ -1,8 +1,5 @@
 import math
-import sys
 import turtle
-
-sys.setrecursionlimit(100)
 
 class Component:
     def __init__(self):
@@ -110,12 +107,13 @@ class GameObject(Component):
         if position is None:
             position = Vector2()
         if scale is None:
-            scale = Vector2()
+            scale = Vector2(1, 1)
         if starting_comps is None:
             starting_comps = []
 
         self.transform = self.add_component(Transform())
         self.transform.position = position
+        self.transform.scale = scale
         game_objects.append(self)
 
         for comp in starting_comps:
@@ -317,6 +315,7 @@ class Shooter(Component):
             self.shoot()
         else:
             self.shoot_timer += 1
+
 
         if self.max_reverse_time > 0:
             if not self.reversing:
