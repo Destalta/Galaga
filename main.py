@@ -134,6 +134,8 @@ class GameObject(Component):
             self.add_component(comp)
 
     def destroy(self):
+        if not (self in game_objects):
+            return
         game_objects.remove(self)
         for comp in self.components:
             if isinstance(comp, RenderObject):
@@ -390,6 +392,7 @@ class Entity(Component):
         self.move_speed = 5
         self.dead = False
         self.health = 1
+        self.death_effect_color = "white"
 
     def collide(self, allow_player_bullets):
         for bullet in bullets:
@@ -407,6 +410,7 @@ class Entity(Component):
 
     def die(self):
         self.game_object.destroy()
+        death_effect = GameObject(position=self.game_object.transform.position, starting_comps=[DeathEffect(self.death_effect_color)])
 
     def update(self):
         if self.dead:
@@ -476,6 +480,7 @@ class Player(Entity):
         self.sprite = GameObject()
         self.health = 1
         self.invincibility = True
+        self.death_effect_color = "red"
 
         self.wide_shooter = None
 
@@ -502,7 +507,7 @@ class Player(Entity):
         if self.invincibility:
             return
         super().die()
-        death_effect = GameObject(position=self.game_object.transform.position, starting_comps=[PlayerDeathEffect()])
+
         screen.ontimer(spawn_player, 1000)
 
     def update(self):
@@ -525,13 +530,14 @@ class Player(Entity):
         else:
             self.move_input.x = 0
 
-class PlayerDeathEffect(Component):
-    def __init__(self):
+class DeathEffect(Component):
+    def __init__(self, color):
         super().__init__()
+        self.color = color
 
     def start(self):
         sprites = []
-        outer_circle = self.game_object.add_component(Sprite("red", "circle"))
+        outer_circle = self.game_object.add_component(Sprite(self.color, "circle"))
         outer_circle.sort_order = 5
         sprites.append(outer_circle)
         self.game_object.transform.scale = Vector2(2, 2)
@@ -571,6 +577,7 @@ class Enemy(Entity):
         self.health = health
         self.shooters = []
         self.events = []
+        self.death_effect_color = "blue"
 
     def add_shooter(self, shooter):
         self.game_object.add_component(shooter)
@@ -630,22 +637,22 @@ def create_enemy(health = 125):
 
 spawn_player()
 
-enemy = create_enemy(health=125)
-enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 325), duration=1))
+enemy = create_enemy(health=55)
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 325), duration=0.5))
 enemy.events.append(wait_for_seconds(1))
 enemy.events.append(lambda: enemy.add_shooter(Shooter(timer=4, rot=4, reverse=5, speed=8, bands=7, spread=180, color="turquoise")))
 enemy.events.append(wait_for_seconds(5))
-enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(-100, 325), 1))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(-100, 325), duration=0.5))
 enemy.events.append(wait_for_seconds(5))
-enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 325), 1))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 325), duration=0.5))
 enemy.events.append(wait_for_seconds(5))
-enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(100, 325), 1))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(100, 325), duration=0.5))
 enemy.events.append(wait_for_seconds(5))
-enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 325), 1))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 325), duration=0.5))
 enemy.events.append(wait_for_seconds(5))
 enemy.events.append(lambda: enemy.clear_shooters())
 enemy.events.append(wait_for_seconds(2))
-enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 500), 1))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 500), 0.5))
 enemy.events.append(wait_for_seconds(4))
 enemy.events.append(lambda: enemy.game_object.destroy())
 
