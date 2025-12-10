@@ -1,5 +1,13 @@
+
 import math
 import turtle
+
+def wait_for_seconds(t):
+    for i in range(0, int(t*16)):
+        yield
+
+def start_coroutine(coroutine):
+    coroutines.append(coroutine)
 
 class Component:
     def __init__(self):
@@ -48,9 +56,6 @@ class Vector2:
     def magnitude(self):
         return (self.x**2 + self.y**2)**0.5
 
-    def lerp(self, other, t):
-        return self + (other - self) * t
-
 class Transform(Component):
     def __init__(self):
         super().__init__()
@@ -71,6 +76,15 @@ class Transform(Component):
             if not self.ignore_parent_scale:
                 self.scale = self.parent.scale + self.local_scale
             self.rotation = self.parent.rotation + self.local_rotation
+
+    def tween_position(self, new_position, duration):
+        return Lerp(self.game_object.transform, new_position, duration)
+
+    def tween_rotation(self, new_rotation, duration):
+        return Lerp(self.game_object.transform, new_rotation, duration)
+
+    def tween_scale(self, new_scale, duration):
+        return Lerp(self.game_object.transform, new_scale, duration)
 
     @property
     def parent(self):
@@ -135,6 +149,9 @@ class GameObject(Component):
         comp.game_object = self
         comp.start()
         return comp
+
+    def remove_component(self, comp):
+        self.components.remove(comp)
 
     def update(self):
         for comp in self.components:
@@ -273,19 +290,23 @@ def angle_to_vector(angle):
     return Vector2(math.cos(radian), math.sin(radian))
 
 class Bullet(Component):
-    def __init__(self, angle = 90, speed = 5):
+    def __init__(self, angle = 90, rot_speed = 0, speed = 5):
         super().__init__()
         self.angle = angle
         self.speed = speed
         self.player_flag = False
         self.radius = 10
+        self.rotation_speed = rot_speed
+        self.extra_rotation = 0
 
     def update(self):
-        self.game_object.transform.position += angle_to_vector(self.angle) * self.speed
-        self.game_object.transform.rotation = self.angle - 90
+        self.game_object.transform.position += angle_to_vector(self.angle + self.extra_rotation) * self.speed
+        self.game_object.transform.rotation = (self.angle - 90) + self.extra_rotation
+        self.extra_rotation += self.rotation_speed
+
 
 class Shooter(Component):
-    def __init__(self, speed=15, timer=5, bands=3, spread=180, rot=0, backwards=0, radiance=0, color="red", radius=8, player_flag = False):
+    def __init__(self, speed=15, timer=5, bands=3, spread=180, rot=0, reverse=0, radiance=0, color="red", radius=8, scale=Vector2(0.75, 1.5), player_flag = False):
         super().__init__()
         self.shoot_input = False
         self.max_shoot_timer = timer
@@ -296,7 +317,7 @@ class Shooter(Component):
         self.spawn_position = Vector2(0, 7)
         self.player_flag = player_flag
         self.color = color
-        self.bullet_scale = Vector2(1, 1)
+        self.bullet_scale = scale
         self.radiance = radiance
         self.radiance_counter = 0
         self.max_radiance_counter = 5
@@ -305,7 +326,7 @@ class Shooter(Component):
         self.sort_order = 1
         self.rotation_speed = rot
         self.current_rot_offset = 0
-        self.max_reverse_time = backwards
+        self.max_reverse_time = reverse
         self.current_reverse_time = 0
         self.reversing = False
 
@@ -315,7 +336,6 @@ class Shooter(Component):
             self.shoot()
         else:
             self.shoot_timer += 1
-
 
         if self.max_reverse_time > 0:
             if not self.reversing:
@@ -396,12 +416,6 @@ class Entity(Component):
         self.game_object.transform.position.x += self.move_input.x * self.move_speed
         self.game_object.transform.position.y += self.move_input.y * self.move_speed
 
-class PathPoint:
-    def __init__(self, position, rotation=-90, wait_time=1):
-        self.position = position
-        self.rotation = rotation
-        self.wait_time = wait_time
-
 class BlackBars(Component):
     def __init__(self):
         super().__init__()
@@ -423,23 +437,27 @@ class BlackBars(Component):
                 bar.transform.scale = Vector2(bar_width, screen_dimensions.y / 2)
                 bar.transform.position = Vector2(((screen_dimensions.x / 2) + bar_width * 10) * mult, 0)
 
-class Enemy(Entity):
-    def __init__(self, health=25, path_points=None):
-        super().__init__()
-        self.path_points = path_points
-        self.path_lerp_timer = 0
-        self.health = health
+class Lerp:
+    def __init__(self, transform, target_position, duration):
+        lerps.append(self)
+        self.timer = 0
+        self.lerping = True
+        self.transform = transform
+        self.target_position = target_position
+        self.duration = duration
 
-    def start(self):
+    def on_complete(self):
         pass
 
-    def go_to_path_point(self, path_point):
-        self.game_object.transform.position = self.game_object.transform.position.lerp(path_point.position, self.path_lerp_timer)
-        yield
-
     def update(self):
-        super().update()
-        self.collide(allow_player_bullets=True)
+        if self.lerping:
+            self.timer += self.duration/100
+            self.transform.position = self.transform.position + (self.target_position - self.transform.position) * self.timer
+            if self.timer >= 0.3:
+                self.timer = 0
+                self.lerping = False
+                self.on_complete()
+                lerps.remove(self)
 
 class GameManager:
     def __init__(self):
@@ -471,7 +489,7 @@ class Player(Entity):
         screen.ontimer(self.end_invincibility, 1000)
 
         self.wide_shooter = self.game_object.add_component(
-            Shooter(speed=30, timer=2, color="turquoise4", bands=5, spread=25, radius=16, player_flag=True))
+            Shooter(speed=30, timer=2, bands=5, spread=25, radius=16, player_flag=True, color="turquoise4"))
         self.wide_shooter.bullet_scale = Vector2(0.25, 2)
         self.wide_shooter.radiance = 5
         self.wide_shooter.radiance_y_influence = True
@@ -512,15 +530,18 @@ class PlayerDeathEffect(Component):
         super().__init__()
 
     def start(self):
-        sprite = self.game_object.add_component(Sprite("red", "circle"))
-        sprite.sort_order = 5
+        sprites = []
+        outer_circle = self.game_object.add_component(Sprite("red", "circle"))
+        outer_circle.sort_order = 5
+        sprites.append(outer_circle)
         self.game_object.transform.scale = Vector2(2, 2)
 
         lifetime = 200
         blinks = 4
         segment_duration = int(lifetime/blinks)
         for i in range(1, blinks + 1):
-            screen.ontimer(sprite.toggle_visibility, segment_duration * i)
+            for s in sprites:
+                screen.ontimer(s.toggle_visibility, segment_duration * i)
         screen.ontimer(self.game_object.destroy, segment_duration * (blinks + 2))
 
 
@@ -542,16 +563,47 @@ class Background(Component):
         self.game_object.transform.position.y -= self.scroll_rate
         if abs(self.game_object.transform.position.y) >= 900:
             self.game_object.transform.position.y = 0
+
+class Enemy(Entity):
+    def __init__(self, health=25, path_points=[]):
+        super().__init__()
+        self.path_points = path_points
+        self.health = health
+        self.shooters = []
+        self.events = []
+
+    def add_shooter(self, shooter):
+        self.game_object.add_component(shooter)
+        self.shooters.append(shooter)
+
+    def clear_shooters(self):
+        for shooter in self.shooters:
+            self.game_object.remove_component(shooter)
+        self.shooters.clear()
+
+    def event_routine(self):
+        for event in self.events:
+            if callable(event):
+                event()
+            else:
+                yield from event
+
+    def update(self):
+        super().update()
+        self.collide(allow_player_bullets=True)
+
 bullet_limit = 1000
 bullets = []
 render_objects = []
 game_objects = []
-
+lerps = []
+coroutines = []
 
 screen = turtle.Screen()
 
 screen.tracer(0, 0)
 screen.delay(0)
+
 screen.title("Galaga")
 screen_dimensions = Vector2(420, 700)
 screen.setup(screen_dimensions.x, screen_dimensions.y)
@@ -568,17 +620,36 @@ def spawn_player():
     player_script = player_object.add_component(Player())
     player_object.add_component(EdgeConstrict())
 
-    player_object.transform.scale = Vector2(0.5, 0.5)
+    player_object.transform.scale = Vector2(0.25, 0.25)
+
+def create_enemy(health = 125):
+    enemy_object = GameObject(position=Vector2(0, 400), starting_comps=[Sprite()])
+    enemy_object.transform.rotation = -180
+    enemy = enemy_object.add_component(Enemy(health=health))
+    return enemy
 
 spawn_player()
 
-enemy = GameObject(starting_comps=[Sprite(), Enemy(health=125)])
-shot1 = enemy.add_component(Shooter(timer=2, rot=4, backwards=5, speed=12, bands=11, spread=140, color="turquoise"))
-shot1.bullet_scale = Vector2(0.75, 1.5)
-shot2 = enemy.add_component(Shooter(timer=7, rot=-2, backwards=5, speed=12, bands=11, spread=140, color="aquamarine"))
-shot2.bullet_scale = Vector2(0.75, 1.5)
-enemy.transform.position = Vector2(0, 325)
-enemy.transform.rotation = -180
+enemy = create_enemy(health=125)
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 325), duration=1))
+enemy.events.append(wait_for_seconds(1))
+enemy.events.append(lambda: enemy.add_shooter(Shooter(timer=4, rot=4, reverse=5, speed=8, bands=7, spread=180, color="turquoise")))
+enemy.events.append(wait_for_seconds(5))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(-100, 325), 1))
+enemy.events.append(wait_for_seconds(5))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 325), 1))
+enemy.events.append(wait_for_seconds(5))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(100, 325), 1))
+enemy.events.append(wait_for_seconds(5))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 325), 1))
+enemy.events.append(wait_for_seconds(5))
+enemy.events.append(lambda: enemy.clear_shooters())
+enemy.events.append(wait_for_seconds(2))
+enemy.events.append(lambda: enemy.game_object.transform.tween_position(Vector2(0, 500), 1))
+enemy.events.append(wait_for_seconds(4))
+enemy.events.append(lambda: enemy.game_object.destroy())
+
+start_coroutine(enemy.event_routine())
 
 def refresh_screen():
     ros = render_objects
@@ -589,6 +660,13 @@ def refresh_screen():
 def game_loop():
     for game_object in game_objects:
         game_object.update()
+    for lerp in lerps:
+        lerp.update()
+    for coroutine in coroutines:
+        try:
+            next(coroutine)
+        except StopIteration:
+            coroutines.remove(coroutine)
     refresh_screen()
     input_manager.update()
     game_manager.update()
@@ -598,3 +676,5 @@ game_loop()
 
 refresh_screen()
 screen.mainloop()
+
+
