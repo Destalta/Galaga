@@ -97,8 +97,12 @@ class Transform(Component):
     @parent.setter
     def parent(self, val: "Transform"):
         self._parent = val
-        val.children.append(self)
-        self.on_parent()
+        if val is not None:
+            val.children.append(self)
+            self.on_parent()
+        else:
+            self.on_unparent()
+
 
     @parent.deleter
     def parent(self):
@@ -205,17 +209,18 @@ class Sprite(RenderObject):
         self.pen.stamp()
 
 class Text(RenderObject):
-    def __init__(self, text = " ", color = "black", font_size = "54", font = "arial"):
+    def __init__(self, text = " ", color = "black", font_size = "54", font = "arial", align = "center"):
         self.text = text
         self.color = color
         self.font = font
         self.font_size = font_size
+        self.align = align
         super().__init__()
 
     def pseudostamp(self):
         super().pseudostamp()
         self.pen.color(self.color)
-        self.pen.write(self.text, font=(self.font, self.font_size), align="center")
+        self.pen.write(self.text, font=(self.font, self.font_size), align=self.align)
 
 class Input:
     def __init__(self):
@@ -259,12 +264,11 @@ class Input:
 class EdgeDelete(Component):
     def __init__(self):
         super().__init__()
-
     def update(self):
         super().update()
         transform = self.game_object.transform
-        bool_x = self.detect(transform.position.x, screen_dimensions.x / 2, -transform.scale.x * 10)
-        bool_y = self.detect(transform.position.y, screen_dimensions.y / 2, -transform.scale.y * 10)
+        bool_x = self.detect(transform.position.x, game_dimensions.x / 2, -transform.scale.x * 10)
+        bool_y = self.detect(transform.position.y, game_dimensions.y / 2, -transform.scale.y * 10)
         if bool_x or bool_y:
             self.game_object.destroy()
 
@@ -282,8 +286,8 @@ class EdgeConstrict(Component):
     def update(self):
         super().update()
         transform = self.game_object.transform
-        transform.position.x = self.constrict(transform.position.x, screen_dimensions.x / 2, transform.scale.x * 10)
-        transform.position.y = self.constrict(transform.position.y, (screen_dimensions.y + 10) / 2, transform.scale.y * 20)
+        transform.position.x = self.constrict(transform.position.x, game_dimensions.x / 2, transform.scale.x * 10)
+        transform.position.y = self.constrict(transform.position.y, (game_dimensions.y + 10) / 2, transform.scale.y * 20)
 
     def constrict(self, a, b, extra_size = 0):
         if a >= (b - extra_size):
@@ -305,22 +309,33 @@ class Bullet(Component):
         self.radius = 10
         self.rotation_speed = rot_speed
         self.extra_rotation = 0
-        self.bullet_rot_delay = 0
-        self.bullet_rot_delay_timer = 0
+        self.rot_delay = 0
+        self.rot_delay_timer = 0
+        self.extra_speed = 0
+        self.acceleration = 0
+        self.acceleration_delay = 0
+        self.acceleration_delay_timer = 0
 
     def update(self):
+        if game_manager.ended:
+            self.game_object.destroy()
         extra_rot = self.extra_rotation
-        if self.bullet_rot_delay > 0:
-            self.bullet_rot_delay_timer += 1
+        if self.rot_delay > 0:
+            self.rot_delay_timer += 1
+        if self.acceleration_delay > 0:
+            self.acceleration_delay_timer += 1
         new_angle = self.angle + extra_rot
-        self.game_object.transform.position += angle_to_vector(new_angle) * self.speed
+        self.game_object.transform.position += (angle_to_vector(new_angle) * (self.speed + self.extra_speed))
         self.game_object.transform.rotation = (new_angle - 90)
-        if (not self.bullet_rot_delay > 0) or self.bullet_rot_delay_timer >= self.bullet_rot_delay:
+        if (not self.rot_delay > 0) or self.rot_delay_timer >= self.rot_delay:
             self.extra_rotation += self.rotation_speed
+
+        if (not self.acceleration_delay > 0) or self.acceleration_delay_timer >= self.acceleration_delay:
+            self.extra_speed += self.acceleration
 
 
 class Shooter(Component):
-    def __init__(self, speed=15, timer=5, bands=3, spread=180, rot=0, reverse=0, radiance=0, color="red", radius=8, bullet_rot=0, bullet_rot_delay=0, scale=Vector2(0.75, 1.5), player_flag = False):
+    def __init__(self, speed=15, timer=5, bands=3, spread=180, rot=0, reverse=0, radiance=0, color="red", radius=8, bullet_rot=0, bullet_rot_delay=0, bullet_acceleration=0, bullet_acceleration_delay=0, scale=Vector2(0.75, 1.5), player_flag = False):
         super().__init__()
         self.shoot_input = False
         self.max_shoot_timer = timer
@@ -328,6 +343,8 @@ class Shooter(Component):
         self.bands = bands
         self.band_spread = spread
         self.bullet_speed = speed
+        self.bullet_acceleration = bullet_acceleration
+        self.bullet_acceleration_delay = bullet_acceleration_delay
         self.spawn_position = Vector2(0, 7)
         self.player_flag = player_flag
         self.color = color
@@ -347,6 +364,8 @@ class Shooter(Component):
         self.bullet_rot_delay = bullet_rot_delay
 
     def update(self):
+        if game_manager.ended:
+            return
         if self.shoot_timer > self.max_shoot_timer:
             self.shoot_timer = 0
             self.shoot()
@@ -384,7 +403,7 @@ class Shooter(Component):
                     radianced = True
                     amount = self.radiance
                     if self.radiance_y_influence:
-                        influence = ((screen_dimensions.y / 8 - self.game_object.transform.position.y) - 15) / 1000
+                        influence = ((game_dimensions.y / 8 - self.game_object.transform.position.y) - 15) / 1000
                         amount *= influence
                     if amount < 0:
                         amount = 0
@@ -396,9 +415,11 @@ class Shooter(Component):
             bul.transform.scale = self.bullet_scale
             bullet_script = bul.add_component(Bullet(angle = angle, speed = self.bullet_speed))
             bullet_script.rotation_speed = self.bullet_rot
-            bullet_script.bullet_rot_delay = self.bullet_rot_delay
+            bullet_script.rot_delay = self.bullet_rot_delay
             bullet_script.player_flag = self.player_flag
             bullet_script.radius = self.radius
+            bullet_script.acceleration = self.bullet_acceleration
+            bullet_script.acceleration_delay = self.bullet_acceleration_delay
             bullets.append(bullet_script)
 
 class Entity(Component):
@@ -412,6 +433,9 @@ class Entity(Component):
         self.death_effect_color = "white"
         self.death_effect_scale = Vector2(2, 2)
 
+    def take_damage(self, val):
+        self.health -= val
+
     def collide(self, allow_player_bullets):
         if self.active == False:
             return
@@ -420,18 +444,18 @@ class Entity(Component):
                 transform = self.game_object.transform
                 bullet_transform = bullet.game_object.transform
                 if (transform.position - bullet_transform.position).magnitude() < bullet.radius:
-                    self.health -= 1
+                    self.take_damage(1)
 
                     if self.health <= 0:
                         self.die()
                         return
 
-                    phase_particle = GameObject(position=bullet_transform.position).add_component(PhaseParticle(self.death_effect_color))
+                    damage_particle = GameObject(position=bullet_transform.position).add_component(DamageParticle(self.death_effect_color))
                     reduced_angle = bullet.angle
                     if abs(reduced_angle) > 360:
                         reduced_angle -= 360 * 1 if reduced_angle > 0 else -1
                     if reduced_angle < 0:
-                        phase_particle.going_up = False
+                        damage_particle.going_up = False
 
     def start(self):
         super().start()
@@ -442,7 +466,7 @@ class Entity(Component):
         death_effect = GameObject(position=self.game_object.transform.position, scale=self.death_effect_scale, starting_comps=[DeathEffect(self.death_effect_color)])
 
     def update(self):
-        if self.active == False:
+        if (self.active == False) or game_manager.ended:
             return
         self.game_object.transform.position.x += self.move_input.x * self.move_speed
         self.game_object.transform.position.y += self.move_input.y * self.move_speed
@@ -470,7 +494,7 @@ class BlackBars(Component):
                 bar.transform.position = Vector2(((self.dimensions.x / 2) + bar_width * 10) * mult, 0)
 
 class Lerp:
-    def __init__(self, obj, attribute, target, speed):
+    def __init__(self, obj, attribute, target, speed, int_only = False):
         lerps.append(self)
         self.timer = 0
         self.lerping = True
@@ -478,6 +502,7 @@ class Lerp:
         self.obj = obj
         self.attribute = attribute
         self.speed = speed
+        self.int_only = int_only
 
     def on_complete(self):
         pass
@@ -485,8 +510,11 @@ class Lerp:
     def update(self):
         if self.lerping:
             self.timer += self.speed / 100
-            new_val = getattr(self.obj, self.attribute)
-            new_val += (self.target - new_val) * self.timer
+            current = getattr(self.obj, self.attribute)
+            current += (self.target - current) * self.timer
+            new_val = current
+            if self.int_only:
+                new_val = int(new_val)
             setattr(self.obj, self.attribute, new_val)
             if self.timer >= 0.3:
                 self.timer = 0
@@ -494,15 +522,44 @@ class Lerp:
                 self.on_complete()
                 lerps.remove(self)
 
-class GameManager:
+class GameManager(Component):
     def __init__(self):
-        self.death_count = 0
         self.current_move_speed_index = 0
+        self.score = 0
+        self.score_text = None
+        self.ended = False
+
+    def start(self):
+        self.score_text = GameObject().add_component(Text(color="white", font_size=13, align="left"))
+        self.score_text.game_object.transform.position = Vector2(230, 300)
+        self.score_text.sort_order = 1000
+        self.set_score(0)
+
+    def refresh_text(self):
+        self.score_text.text = "Score: " + str(self.score)
+
+    def add_score(self, val):
+        self.score += val
+        if self.score < 0:
+            self.score = 0
+        self.refresh_text()
+
+    def set_score(self, val):
+        self.score = val
+        if self.score < 0:
+            self.score = 0
+        self.refresh_text()
 
     def update(self):
         for num in range(0, 10):
             if input_manager.get_key(str(num)):
                 self.current_move_speed_index = num - 1
+
+    def end_game(self):
+        self.ended = True
+        self.score_text.align = "center"
+        Lerp(self.score_text, "font_size", 45, speed=1, int_only=True)
+        self.score_text.game_object.transform.tween_position(Vector2(0, 0), speed=1)
 
 class Player(Entity):
     def __init__(self):
@@ -512,6 +569,8 @@ class Player(Entity):
         self.health = 1
         self.invincibility = True
         self.death_effect_color = "red"
+        self.living_score_timer = 0
+        self.living_score_max_time = 25
 
         self.wide_shooter = None
 
@@ -537,14 +596,22 @@ class Player(Entity):
     def die(self):
         if self.invincibility:
             return
-        super().die()
 
+        super().die()
+        game_manager.add_score(-100)
         screen.ontimer(spawn_player, 1000)
 
     def update(self):
+        if game_manager.ended:
+            return
         super().update()
         self.collide(allow_player_bullets=False)
         index = game_manager.current_move_speed_index
+        if not self.dead:
+            self.living_score_timer += 1
+            if self.living_score_timer >= self.living_score_max_time:
+                game_manager.add_score(1)
+                self.living_score_timer = 0
         if index < len(self.move_speeds):
             self.move_speed = self.move_speeds[index]
         if input_manager.get_key("Up") or input_manager.get_key("w"):
@@ -580,7 +647,7 @@ class DeathEffect(Component):
                 screen.ontimer(s.toggle_visibility, segment_duration * i)
         screen.ontimer(self.game_object.destroy, segment_duration * (blinks + 2))
 
-class PhaseParticle(Component):
+class DamageParticle(Component):
     def __init__(self, color):
         super().__init__()
         self.color = color
@@ -628,6 +695,8 @@ class Background(Component):
             sprite.sort_order = -99
 
     def update(self):
+        if game_manager.ended:
+            return
         self.game_object.transform.position.y -= self.scroll_rate
         if abs(self.game_object.transform.position.y) >= 900:
             self.game_object.transform.position.y = 0
@@ -638,7 +707,6 @@ class Enemy(Entity):
         self.health = health
         self.shooters = []
         self.events = events
-        #self.death_effect_color = "blue"
         self.death_effect_scale = Vector2(3, 3)
 
     def add_shooter(self, shooter):
@@ -649,6 +717,10 @@ class Enemy(Entity):
         for shooter in self.shooters:
             self.game_object.remove_component(shooter)
         self.shooters.clear()
+
+    def die(self):
+        super().die()
+        game_manager.add_score(500)
 
     def event_routine(self):
         for event in self.events:
@@ -664,6 +736,10 @@ class Enemy(Entity):
         super().update()
         self.collide(allow_player_bullets=True)
 
+    def take_damage(self, val):
+        super().take_damage(val)
+        game_manager.add_score(1)
+
 class EnemySequencer(Component):
     def __init__(self):
         super().__init__()
@@ -674,6 +750,8 @@ class EnemySequencer(Component):
             enemy = self.enemies[i]
             enemy.active = True
             yield from enemy.event_routine()
+        yield from wait_for_seconds(2)
+        yield game_manager.end_game()
 
 bullet_limit = 1000
 bullets = []
@@ -688,14 +766,14 @@ screen.tracer(0, 0)
 screen.delay(0)
 
 screen.title("Galaga")
-screen_dimensions = Vector2(420, 700)
-black_bars = GameObject().add_component(BlackBars(screen_dimensions))
+screen_dimensions = Vector2(720, 700)
+game_dimensions = Vector2(420, 700)
+black_bars = GameObject().add_component(BlackBars(game_dimensions))
 screen.setup(screen_dimensions.x, screen_dimensions.y)
 
 screen.register_shape("bg.gif")
 
 input_manager = Input()
-game_manager = GameManager()
 background = GameObject().add_component(Background())
 enemy_sequencer = GameObject().add_component(EnemySequencer())
 
@@ -705,6 +783,7 @@ def spawn_player():
     player_object.add_component(EdgeConstrict())
 
     player_object.transform.scale = Vector2(0.25, 0.25)
+    return player_script
 
 def create_enemy(health = 125, events = []):
     enemy_object = GameObject(position=Vector2(0, 400), starting_comps=[Sprite()])
@@ -712,7 +791,8 @@ def create_enemy(health = 125, events = []):
     enemy = enemy_object.add_component(Enemy(health=health, events=events))
     enemy.active = False
     return enemy
-spawn_player()
+player = spawn_player()
+game_manager = GameObject().add_component(GameManager())
 
 enemy_1 = create_enemy(health=55, events=[
     lambda: enemy_1.game_object.transform.tween_position(Vector2(0, 325), speed=0.5),
@@ -765,20 +845,13 @@ enemy_2 = create_enemy(health=55, events=[
 ])
 enemy_sequencer.enemies.append(enemy_2)
 
-enemy_3 = create_enemy(health=425, events=[
+enemy_3 = create_enemy(health=155, events=[
     lambda: enemy_3.game_object.transform.tween_position(Vector2(0, 325), speed=0.5),
     wait_for_seconds(4),
-    lambda: enemy_3.add_shooter(Shooter(timer=6, rot=4, reverse=5, speed=6, bands=11, spread=140, color="turquoise")),
-    lambda: enemy_3.add_shooter(Shooter(timer=16, rot=-2, reverse=5, speed=6, bands=11, spread=140, color="aquamarine")),
-    wait_for_seconds(5),
-    lambda: enemy_3.game_object.transform.tween_position(Vector2(-50, 325), speed=0.5),
-    wait_for_seconds(5),
-    lambda: enemy_3.game_object.transform.tween_position(Vector2(-150, 325), speed=0.5),
-    lambda: enemy_3.clear_shooters(),
-    wait_for_seconds(5),
-    lambda: enemy_3.add_shooter(Shooter(timer=4, rot=1, reverse=10, radiance=3, speed=4, bands=3, bullet_rot=0.5, bullet_rot_delay=160, spread=75, color="aquamarine")),
-    wait_for_seconds(25),
-    lambda: enemy_3.game_object.transform.tween_position(Vector2(0, 325), speed=0.1),
+    lambda: enemy_3.add_shooter(Shooter(timer=7, rot=1, reverse=5, speed=7, bands=5, bullet_rot=-0.5, bullet_acceleration=0.1, bullet_acceleration_delay=20, color="turquoise", scale=Vector2(2,2), radius=18)),
+    lambda: enemy_3.add_shooter(Shooter(timer=7, rot=1, reverse=5, speed=7, bands=5, bullet_rot=0.25, bullet_acceleration=0.1, bullet_acceleration_delay=20, color="aquamarine", scale=Vector2(2,2), radius=18)),
+    lambda: enemy_3.add_shooter(Shooter(timer=18, rot=5, reverse=3, speed=9, bands=3, bullet_rot=1, bullet_rot_delay=10, color="turquoise3", scale=Vector2(4,4), radius=36)),
+    wait_for_seconds(2),
     wait_for_seconds(50),
     lambda: enemy_3.clear_shooters(),
     wait_for_seconds(5),
@@ -787,7 +860,6 @@ enemy_3 = create_enemy(health=425, events=[
     lambda: enemy_3.game_object.destroy()
 ])
 enemy_sequencer.enemies.append(enemy_3)
-
 
 start_coroutine(enemy_sequencer.routine())
 
@@ -809,12 +881,9 @@ def game_loop():
             coroutines.remove(coroutine)
     refresh_screen()
     input_manager.update()
-    game_manager.update()
     screen.ontimer(game_loop, 16)
 
 game_loop()
 
 refresh_screen()
 screen.mainloop()
-
-
